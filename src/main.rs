@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
-use macroquad::prelude::*;
+use macroquad::prelude::{*};
+use std::collections::VecDeque;
 
 const MAP: usize = 20;
 const T_SIZE: (f32, f32) = (32. , 16.);
@@ -17,6 +18,20 @@ enum Tile {
     Floor
 }
 
+struct Monster {
+    x: usize,
+    y: usize,
+    hp: i32,
+    cd: f32,
+}
+
+struct DmgText {
+    x: f32,
+    y: f32,
+    dmg: i32,
+    life: f32
+}
+
 // Math Helper
 fn to_screen(x: usize, y: usize, cam: (f32, f32)) -> (f32, f32){
     (
@@ -25,15 +40,71 @@ fn to_screen(x: usize, y: usize, cam: (f32, f32)) -> (f32, f32){
     )
 }
 
+fn to_tile(sx: f32, sy: f32, cam: (f32, f32)) -> (usize, usize){
+    let (ax, ay) = (sx - cam.0, sy - cam.1);
+
+    (
+        ((ax / T_SIZE.0 + ay / T_SIZE.1) / 2.) as usize,
+        ((ay / T_SIZE.1 - ax / T_SIZE.0) / 2.) as usize
+    )
+}
+
+// pathfinding function using bfs
+fn bfs(map: &[[Tile;MAP];MAP], start: (usize, usize), goal: (usize, usize)) -> Vec<(usize,usize)>{
+
+    let mut g = VecDeque::from([start]);
+    let mut  visited = [[false; MAP]; MAP];
+
+    visited[start.1][start.0] = true;
+
+    let mut parent = [[None;MAP];MAP];
+
+    while let Some(curr) = g.pop_front() {
+        if curr == goal {
+            let mut path  = vec![];
+            let mut c = goal;
+            while c != start {
+                path.push(c);
+                
+                c = parent[c.1][c.0].unwrap();
+            }
+
+            path.reverse();
+
+            return path;
+        }
+
+        for (dx, dy) in [(0, -1), (0, 1), (-1 ,0), (1, 0)] {
+            let (nx, ny) = ((curr.0 as i32  + dx) as usize, (curr.1 as i32  + dy) as usize);
+
+            if nx < MAP && ny < MAP && !visited[ny][nx] && map[ny][nx] == Tile::Floor {
+                visited[ny][nx] = true;
+                parent[ny][nx] = Some(curr);
+                g.push_back((nx, ny));
+            }
+        }
+
+    }
+  
+    vec![] 
+}
+
 //draw hero and helpers
-fn draw_stickman(x: usize, y:usize , cam: (f32, f32)){
+fn draw_stickman(x: usize, y:usize , cam: (f32, f32), enemy: bool){
     let (sx, mut sy) = to_screen(x, y, cam);
 
     sy += 16.;
 
     draw_ellipse(sx, sy + 3., 10., 5.,0., Color::new(0.,0.,0.,0.2));
 
-    draw_circle_lines(sx, sy - 32., 7., 2., BLACK);
+    // enemy
+    if enemy {
+        draw_line(sx - 5., sy - 32., sx, sy - 30., 2.,  RED);
+        draw_line(sx + 5., sy - 32., sx, sy - 30., 2.,  RED);
+    }
+    else{
+        draw_circle_lines(sx, sy - 32., 7., 2., BLACK);
+    }
 
     for l in [
         [0., -25., 0., -8. ],
@@ -84,7 +155,11 @@ struct Game{
     map: [[Tile;MAP];MAP],
     cam: (f32, f32),
     px: usize,
-    py:usize
+    py:usize,
+    path: Vec<(usize, usize)>,
+    player_cd: f32,
+    monsters: Vec<Monster>,
+    texts: Vec<DmgText>
 }
 
 impl Game{
@@ -107,15 +182,57 @@ impl Game{
             map,
             cam: (screen_width() / 2., 80.),
             px: 2,
-            py: 2 
+            py: 2,
+            path: vec![],
+            player_cd: 0.0,
+            monsters: vec![
+                Monster { x: 8, y: 8, hp:30, cd:0. },
+                Monster { x: 12, y: 4, hp:30, cd:0. },
+                Monster { x: 15, y: 12, hp:30, cd:0. },
+            ],
+            texts: vec![]
         }
     }
 
-    fn update(&mut self, _dt: f32) -> bool{
-        if is_key_pressed(KeyCode::Space){
+    fn update(&mut self, dt: f32) -> bool{
+        if is_key_pressed(KeyCode::Escape) {
             return true;
         }
-        false
+
+        self.texts.retain_mut(|t| {
+            t.life -= dt;
+            t.y -= 20. * dt;
+            t.life > 0.
+        });
+
+        
+
+        if is_mouse_button_pressed(MouseButton::Left){
+            let (mx, my) = mouse_position();
+            let (tx, ty) = to_tile(mx, my, self.cam);
+
+            // check if the click is inside the map
+            if tx < MAP && ty < MAP && self.map[ty][tx] == Tile::Floor {
+                self.path = bfs(&self.map,  (self.px, self.py), (tx, ty));
+            } 
+        }
+
+        //handle movement
+        if !self.path.is_empty(){
+            self.player_cd -= dt;
+
+            // time to move ?
+            if self.player_cd <= 0. {
+                self.player_cd = 0.15;
+
+                let  next_step = self.path[0];
+                self.px = next_step.0;
+                self.py = next_step.1;
+                self.path.remove(0);
+            }
+        }
+
+        return false;
     }
 
     fn draw(&self){
@@ -131,8 +248,18 @@ impl Game{
             }
         }
 
+        //draw the path
+        for (px, py) in &self.path {
+            let (sx, sy) = to_screen(*px, *py, self.cam);
+            draw_circle(sx, sy + 16., 4., GOLD);
+        }
+
         // draw the player
-        draw_stickman(self.px, self.py, self.cam);
+        draw_stickman(self.px, self.py, self.cam, false);
+
+        for m in self.monsters.iter() {
+            draw_stickman(m.x, m.y, self.cam, true);
+        }
     }
 }
 
