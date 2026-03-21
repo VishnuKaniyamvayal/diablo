@@ -31,6 +31,12 @@ struct DmgText {
     life: f32
 }
 
+struct Coin {
+    x: usize,
+    y: usize,
+    point: i32,
+}
+
 // Math Helper
 fn to_screen(x: usize, y: usize, cam: (f32, f32)) -> (f32, f32){
     (
@@ -122,6 +128,34 @@ fn draw_stickman(x: usize, y:usize , cam: (f32, f32), enemy: bool){
     }
 }
 
+fn draw_coin(x: usize, y: usize, point: i32, cam: (f32, f32)){
+
+    let (sx, mut sy) = to_screen(x, y, cam);
+    sy += 16.;
+
+    // Soft shadow to anchor the coin to the isometric tile.
+    draw_ellipse(sx, sy + 3., 9., 4., 0., Color::new(0., 0., 0., 0.2));
+
+    // Layered circles emulate a simple radial gradient.
+    draw_circle(sx, sy - 8., 8., Color::new(0.95, 0.72, 0.08, 1.));
+    draw_circle(sx, sy - 8., 6.6, Color::new(1.0, 0.85, 0.2, 1.));
+    draw_circle(sx, sy - 8., 5.2, Color::new(1.0, 0.94, 0.5, 1.));
+
+    // Metallic rim + tiny highlight.
+    draw_circle_lines(sx, sy - 8., 8., 1.8, Color::new(0.65, 0.45, 0.05, 1.));
+    draw_circle(sx - 2.2, sy - 10.5, 1.3, Color::new(1., 1., 1., 0.65));
+
+    let text = point.to_string();
+    let dims = measure_text(&text, None, 14, 1.0);
+    draw_text(
+        &text,
+        sx - dims.width / 2.,
+        sy - 8. + dims.height / 3.,
+        14.,
+        Color::new(0.35, 0.2, 0.02, 1.),
+    );
+}
+
 fn draw_wall(x: usize, y: usize, cam: (f32, f32)){
 
     let (sx, sy) = to_screen(x, y, cam);
@@ -166,6 +200,8 @@ struct Game{
     monsters: Vec<Monster>,
     texts: Vec<DmgText>,
     hp: i32,
+    coins: Vec<Coin>,
+    points: i32,
 }
 
 impl Game{
@@ -197,7 +233,13 @@ impl Game{
                 Monster { x: 15, y: 12, hp:30, cd:0. },
             ],
             texts: vec![],
-            hp: 100
+            hp: 100,
+            points: 0,
+            coins: vec![
+                Coin { x: 3, y: 3, point: 1 },
+                Coin { x: 10, y: 10, point: 2 },
+                Coin { x: 16, y: 5, point: 5 },
+            ],
         }
     }
 
@@ -217,6 +259,7 @@ impl Game{
 
             // check if the click is inside the map
             if tx < MAP && ty < MAP && self.map[ty][tx] == Tile::Floor {
+
                 self.path = bfs(&self.map,  (self.px, self.py), (tx, ty));
             } 
         }
@@ -228,7 +271,11 @@ impl Game{
             // time to move ?
             if self.player_cd <= 0. {
                 self.player_cd = 0.15;
-
+                // collect the coin if exists
+                if let Some(i) = self.coins.iter().position(|c| c.x == self.path[0].0 && c.y == self.path[0].1){
+                    self.points += self.coins[i].point;
+                    self.coins.remove(i);
+                }
                 let (nx, ny)  = self.path[0];
                 if let Some(i) = self.monsters.iter().position(|m| m.x == nx && m.y == ny){
                     //attack
@@ -324,6 +371,11 @@ impl Game{
             draw_stickman(m.x, m.y, self.cam, true);
         }
 
+        // draw coins
+        for c in self.coins.iter() {
+            draw_coin(c.x, c.y, c.point, self.cam);
+        }
+
         //draw floating texts
         for t in &self.texts {
             draw_text(&format!("-{}", t.dmg), t.x, t.y, 20., RED);
@@ -331,6 +383,7 @@ impl Game{
 
         // draw hud
         draw_text(&format!("HP:{}", self.hp), 20., screen_height() - 40., 30., BLACK);
+        draw_text(&format!("POINTS:{}", self.points), 20., screen_height() - 20., 30., BLACK);
 
     }
 }
@@ -362,9 +415,9 @@ async fn main() {
                 draw_rectangle(0., 0., screen_width(), screen_height(), Color::new(1., 1. ,1. , 0.7));
                 draw_text("GAME OVER", 100., 100., 60., RED);
 
-                draw_text(&format!("Score: {}", game.hp), 100., 160., 30., BLACK);
+                draw_text(&format!("Score: {}", game.points), 100., 160., 30., BLACK);
                 
-                draw_text("Enter to reset", 100., 150., 20., GRAY );
+                draw_text("Enter to reset", 100., 200., 20., GRAY );
 
                 if is_key_pressed(KeyCode::Enter){
                     state = AppState::Menu;
