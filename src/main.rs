@@ -51,7 +51,7 @@ fn to_tile(sx: f32, sy: f32, cam: (f32, f32)) -> (usize, usize){
 fn dist(p1: (usize, usize), p2: (usize, usize)) -> i32{
     let dx = (p1.0 as i32 - p2.0 as i32).abs();
     let dy = (p1.1 as i32 - p2.1 as i32).abs();
-    dx - dy
+    dx + dy
 }
 
 // pathfinding function using bfs
@@ -165,7 +165,7 @@ struct Game{
     player_cd: f32,
     monsters: Vec<Monster>,
     texts: Vec<DmgText>,
-    hp: i32
+    hp: i32,
 }
 
 impl Game{
@@ -254,7 +254,7 @@ impl Game{
 
                 let (mx, my) = (self.monsters[i].x, self.monsters[i].y);
                 let d = dist((mx, my), (self.px, self.py));
-                println!("DISTANCE :{}",d);
+
                 if d == 1 {
                     self.hp -= 5;
                     let (sx, sy) = to_screen(self.px, self.py, self.cam);
