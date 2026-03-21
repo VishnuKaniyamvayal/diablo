@@ -1,5 +1,4 @@
 #![allow(dead_code)]
-
 use macroquad::prelude::{*};
 use std::collections::VecDeque;
 
@@ -47,6 +46,12 @@ fn to_tile(sx: f32, sy: f32, cam: (f32, f32)) -> (usize, usize){
         ((ax / T_SIZE.0 + ay / T_SIZE.1) / 2.) as usize,
         ((ay / T_SIZE.1 - ax / T_SIZE.0) / 2.) as usize
     )
+}
+
+fn dist(p1: (usize, usize), p2: (usize, usize)) -> i32{
+    let dx = (p1.0 as i32 - p2.0 as i32).abs();
+    let dy = (p1.1 as i32 - p2.1 as i32).abs();
+    dx - dy
 }
 
 // pathfinding function using bfs
@@ -159,7 +164,8 @@ struct Game{
     path: Vec<(usize, usize)>,
     player_cd: f32,
     monsters: Vec<Monster>,
-    texts: Vec<DmgText>
+    texts: Vec<DmgText>,
+    hp: i32
 }
 
 impl Game{
@@ -190,22 +196,20 @@ impl Game{
                 Monster { x: 12, y: 4, hp:30, cd:0. },
                 Monster { x: 15, y: 12, hp:30, cd:0. },
             ],
-            texts: vec![]
+            texts: vec![],
+            hp: 100
         }
     }
 
     fn update(&mut self, dt: f32) -> bool{
-        if is_key_pressed(KeyCode::Escape) {
+        if self.hp <= 0 {
             return true;
         }
-
         self.texts.retain_mut(|t| {
             t.life -= dt;
             t.y -= 20. * dt;
             t.life > 0.
         });
-
-        
 
         if is_mouse_button_pressed(MouseButton::Left){
             let (mx, my) = mouse_position();
@@ -225,14 +229,72 @@ impl Game{
             if self.player_cd <= 0. {
                 self.player_cd = 0.15;
 
-                let  next_step = self.path[0];
-                self.px = next_step.0;
-                self.py = next_step.1;
-                self.path.remove(0);
+                let (nx, ny)  = self.path[0];
+                if let Some(i) = self.monsters.iter().position(|m| m.x == nx && m.y == ny){
+                    //attack
+                    self.damage_monster(i, 10);
+                    //stop moving
+                    self.path.clear();
+                }
+                else{
+                    //move
+                    self.path.remove(0);
+                    self.px = nx;
+                    self.py = ny;
+                }
+            }
+        }
+
+        let occupied: Vec<_> = self.monsters.iter().map(|m| (m.x, m.y)).chain(std::iter::once((self.px, self.py))).collect();
+
+        for i in 0..self.monsters.len(){
+            self.monsters[i].cd -= dt;
+            if self.monsters[i].cd <= 0.{
+                self.monsters[i].cd = 1.0; // slow down monster attacks
+
+                let (mx, my) = (self.monsters[i].x, self.monsters[i].y);
+                let d = dist((mx, my), (self.px, self.py));
+                println!("DISTANCE :{}",d);
+                if d == 1 {
+                    self.hp -= 5;
+                    let (sx, sy) = to_screen(self.px, self.py, self.cam);
+                    self.texts.push(DmgText{
+                        x: sx,
+                        y: sy - 40.,
+                        dmg: 5,
+                        life: 1.0
+                    });
+                }
+                else{
+                    // chase the player
+                    let path = bfs(&self.map, (mx, my), (self.px, self.py));
+                    if path.len() > 1 && !occupied.contains(&path[0]) {
+                        self.monsters[i].x = path[0].0;
+                        self.monsters[i].y = path[0].1;
+                    }
+                }
             }
         }
 
         return false;
+    }
+
+    fn damage_monster(&mut self, idx: usize, amount:i32){
+        self.monsters[idx].hp -= amount;
+
+        //spawn text
+        let (sx, sy) = to_screen(self.monsters[idx].x, self.monsters[idx].y, self.cam);
+        self.texts.push(DmgText{
+                x: sx,
+                y: sy - 40.,
+                dmg: amount,
+                life: 1.0
+        });
+
+        // kill monster
+        if self.monsters[idx].hp <= 0 {
+           self.monsters.remove(idx); 
+        }
     }
 
     fn draw(&self){
@@ -257,9 +319,19 @@ impl Game{
         // draw the player
         draw_stickman(self.px, self.py, self.cam, false);
 
+        // draw monsters
         for m in self.monsters.iter() {
             draw_stickman(m.x, m.y, self.cam, true);
         }
+
+        //draw floating texts
+        for t in &self.texts {
+            draw_text(&format!("-{}", t.dmg), t.x, t.y, 20., RED);
+        }
+
+        // draw hud
+        draw_text(&format!("HP:{}", self.hp), 20., screen_height() - 40., 30., BLACK);
+
     }
 }
 
@@ -289,6 +361,9 @@ async fn main() {
                 game.draw();
                 draw_rectangle(0., 0., screen_width(), screen_height(), Color::new(1., 1. ,1. , 0.7));
                 draw_text("GAME OVER", 100., 100., 60., RED);
+
+                draw_text(&format!("Score: {}", game.hp), 100., 160., 30., BLACK);
+                
                 draw_text("Enter to reset", 100., 150., 20., GRAY );
 
                 if is_key_pressed(KeyCode::Enter){
